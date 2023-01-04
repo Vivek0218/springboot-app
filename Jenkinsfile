@@ -1,44 +1,57 @@
-
-node {
-  
-  def image
-  def mvnHome = tool 'Maven3'
-
-  
-     stage ('checkout') {
-        checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '9ffd4ee4-3647-4a7d-a357-5e8746463282', url: 'https://bitbucket.org/ananthkannan/myawesomeangularapprepo/']]])       
-        }
+pipeline {
+    agent any
     
-    
-    stage ('Build') {
-            sh 'mvn -f MyAwesomeApp/pom.xml clean install'            
-        }
-        
-    stage ('archive') {
-            archiveArtifacts '**/*.jar'
-        }
-        
-    stage ('Docker Build') {
-         // Build and push image with Jenkins' docker-plugin
-        withDockerServer([uri: "tcp://localhost:4243"]) {
-
-            withDockerRegistry([credentialsId: "fa32f95a-2d3e-4c7b-8f34-11bcc0191d70", url: "https://index.docker.io/v1/"]) {
-            image = docker.build("ananthkannan/mywebapp", "MyAwesomeApp")
-            image.push()
-            
-            }
-        }
+    tools {
+        maven "maven 3.8.6"
     }
     
-       stage('docker stop container') {
-            sh 'docker ps -f name=myContainer -q | xargs --no-run-if-empty docker container stop'
-            sh 'docker container ls -a -fname=myContainer -q | xargs -r docker container rm'
-
-       }
-
-    stage ('Docker run') {
-
-        image.run("-p 8085:8085 --rm --name myContainer")
-
+    environment {
+        registryName = "testacr0101"
+        registryCredentials = "TestACR01_Credentials"
+        registryUrl = "testacr0101.azurecr.io"
+        dockerImage = ""
+    }
+    
+    stages {
+        
+        stage('SCM Checkout'){
+            steps{
+            checkout([$class: 'GitSCM', branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'GitHubCredendtials', url: 'https://github.com/Vivek0218/springboot-app.git']]])
+                }
+        }
+        
+        stage('Build Springboot.jar file'){
+            steps{
+                sh "mvn clean install"
+                
+            }
+        }
+        
+        stage('Build Docker Image'){
+            steps {
+                script {
+                  dockerImage = docker.build registryName  
+                }
+            }
+            
+        }
+        
+        stage('Push DockerImage to ACR'){
+            steps {
+                script {
+                    docker.withRegistry( "http://${registryUrl}", registryCredentials) {
+                    dockerImage.push()
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to AKS'){
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'TestAKS0101-Kubeconfig', namespace: '', serverUrl: '') {
+                sh "kubectl apply -f jenkins-aks-deploy-from-acr.yaml"
+                }
+            }
+        }
     }
 }
